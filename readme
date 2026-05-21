@@ -1,0 +1,107 @@
+# SmartPet v2 - Alimentador Automatico (ESP8266 + Servo + LCD I2C)
+
+Projeto de alimentador automatico para pet usando ESP8266, servo 9g e LCD 16x2 I2C.
+O sistema funciona com interface web local, timer, horarios fixos, calibracao de servo e modo offline.
+
+## Funcionalidades
+
+- Alimentacao manual pela pagina web.
+- Timer de disparo unico (contagem regressiva).
+- Ate 4 horarios fixos diarios.
+- Persistencia de configuracoes em EEPROM (horarios, porcao e calibracao).
+- LCD com telas rotativas de status.
+- Reconexao automatica de WiFi.
+- Modo offline (servo + LCD continuam funcionando sem rede).
+- Reset de credenciais WiFi por botao FLASH (GPIO0) ou pela pagina web.
+
+## Hardware
+
+- 1x ESP8266 (NodeMCU, Wemos D1 mini ou similar)
+- 1x Servo 9g
+- 1x LCD 16x2 com modulo I2C
+- Fonte adequada para ESP8266 e servo
+
+## Ligacoes
+
+- LCD SDA -> D2 (GPIO4)
+- LCD SCL -> D1 (GPIO5)
+- Servo sinal -> D4 (GPIO2)
+- Botao reset WiFi -> GPIO0 (botao FLASH da maioria das placas)
+
+## Bibliotecas necessarias
+
+Instale pelo Library Manager da Arduino IDE:
+
+- WiFiManager (tzapu)
+- LiquidCrystal_I2C (Frank de Brabander)
+
+Ja inclusas no core ESP8266:
+
+- ESP8266WebServer
+- Servo
+
+Tambem utilizadas:
+
+- EEPROM
+- Wire
+- time (NTP)
+
+## Como usar
+
+1. Abra o arquivo alimentador-esp8266.ino na Arduino IDE.
+2. Selecione a placa ESP8266 correta e a porta serial.
+3. Compile e grave no ESP8266.
+4. No primeiro boot (ou sem credenciais), conecte no AP SmartPet-Setup.
+5. Acesse 192.168.4.1 para configurar o WiFi.
+6. Apos conectar, abra o IP exibido no LCD para acessar o painel.
+
+## Interface web
+
+No painel voce pode:
+
+- Alimentar agora.
+- Ajustar tamanho da porcao (500 a 8000 ms).
+- Calibrar angulo aberto/fechado e velocidade do servo.
+- Configurar timer unico (h, min, seg).
+- Configurar ate 4 horarios fixos diarios.
+- Trocar/redefinir WiFi.
+
+## Endpoints HTTP
+
+- GET / -> pagina principal
+- GET /api/status -> status em JSON
+- GET /manual -> solicita alimentacao manual
+- GET /setTimer?th=H&tm=M&ts=S -> define/cancela timer
+- GET /setSchedules?... -> salva horarios fixos
+- GET /setPortion?ms=500-8000 -> salva duracao da porcao
+- GET /servoGoto?deg=0-180 -> move servo para teste de calibracao
+- GET /setServo?ao=0-180&af=0-180&sp=1-50 -> salva calibracao do servo
+- GET /resetWifi -> apaga credenciais e reinicia
+
+## Persistencia (EEPROM)
+
+Sao salvos:
+
+- Horarios fixos e se estao habilitados
+- Tempo de porcao
+- Angulos de calibracao (aberto/fechado)
+- Velocidade do sweep do servo
+
+## Observacoes importantes
+
+- O movimento de alimentacao principal usa state machine nao-bloqueante.
+- O modo de teste de servo (/servoGoto e parte da calibracao) usa movimento bloqueante curto.
+- Fuso configurado no codigo: UTC-4 (Manaus/AM).
+- Timer depende de NTP (hora sincronizada).
+
+## Solucao de problemas
+
+- Nao abre painel web: confira o IP no LCD e se celular/PC esta na mesma rede.
+- Servo treme: use fonte externa adequada para o servo e GND comum com o ESP8266.
+- Horario errado: confirme conexao com internet para NTP sincronizar.
+- WiFi travado: segure FLASH por ~3 segundos para resetar credenciais.
+
+## Arquivo principal
+
+- alimentador-esp8266.ino
+
