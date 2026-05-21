@@ -50,7 +50,7 @@ Servo             servoMotor;
 // Constantes
 int           anguloFechado  = 0;
 int           anguloAberto   = 180;
-int           sweepStepMs    = 15;   // ms entre cada grau (5=rapido, 50=devagar)
+int           sweepStepDeg  = 1;    // graus por passo (1=suave, max=range total)
 int           servoPos       = 0;    // posicao atual do servo
 unsigned long portionMs      = 3000UL;
 const unsigned long LCD_TROCA_MS   = 2500UL;
@@ -83,7 +83,7 @@ int  scheduleMinute [MAX_HORARIOS] = {0,  0,  0,  0};
 int  lastExecDay    [MAX_HORARIOS] = {-1, -1, -1, -1};
 
 // EEPROM
-#define EEPROM_MAGIC  0xA9   // incrementado: struct expandida com servo config
+#define EEPROM_MAGIC  0xAB   // incrementado: removido sweepStepMs, mantido sweepStepDeg
 #define EEPROM_SIZE   64
 
 struct ScheduleData {
@@ -94,7 +94,7 @@ struct ScheduleData {
   uint16_t portionMs;
   uint8_t  anguloAberto;
   uint8_t  anguloFechado;
-  uint8_t  sweepStepMs;
+  uint8_t  sweepStepDeg;
 };
 
 // =====================================================================
@@ -107,7 +107,7 @@ void saveSchedules() {
   d.portionMs    = (uint16_t)constrain(portionMs, 500, 8000);
   d.anguloAberto  = (uint8_t)constrain(anguloAberto,  0, 180);
   d.anguloFechado = (uint8_t)constrain(anguloFechado, 0, 180);
-  d.sweepStepMs  = (uint8_t)constrain(sweepStepMs, 1, 50);
+  d.sweepStepDeg = (uint8_t)constrain(sweepStepDeg, 1, 20);
   for (int i = 0; i < MAX_HORARIOS; i++) {
     d.enabled[i] = scheduleEnabled[i];
     d.hour[i]    = (uint8_t)scheduleHour[i];
@@ -136,8 +136,8 @@ void loadSchedules() {
     anguloAberto = d.anguloAberto;
   if (d.anguloFechado <= 180)
     anguloFechado = d.anguloFechado;
-  if (d.sweepStepMs >= 1 && d.sweepStepMs <= 50)
-    sweepStepMs = d.sweepStepMs;
+  if (d.sweepStepDeg >= 1 && d.sweepStepDeg <= 20)
+    sweepStepDeg = d.sweepStepDeg;
   Serial.println("[EEPROM] Dados carregados.");
 }
 
@@ -341,10 +341,13 @@ void processFeed() {
       break;
 
     case FEED_OPENING:
-      if (millis() - feedTimer < (unsigned long)sweepStepMs) return;
+      if (millis() - feedTimer < 1UL) return;
       feedTimer = millis();
       if (servoPos != anguloAberto) {
-        servoPos += (anguloAberto > servoPos) ? 1 : -1;
+        int step = (anguloAberto > servoPos) ? sweepStepDeg : -sweepStepDeg;
+        servoPos += step;
+        if ((step > 0 && servoPos > anguloAberto) || (step < 0 && servoPos < anguloAberto))
+          servoPos = anguloAberto;
         servoMotor.write(servoPos);
       } else {
         feedState = FEED_HOLDING;
@@ -360,13 +363,16 @@ void processFeed() {
       break;
 
     case FEED_CLOSING:
-      if (millis() - feedTimer < (unsigned long)sweepStepMs) return;
-      feedTimer = millis();
+      if (millis() - feedTimer < 1UL) return;
       if (servoPos != anguloFechado) {
-        servoPos += (anguloFechado > servoPos) ? 1 : -1;
+        feedTimer = millis();
+        int step = (anguloFechado > servoPos) ? sweepStepDeg : -sweepStepDeg;
+        servoPos += step;
+        if ((step > 0 && servoPos > anguloFechado) || (step < 0 && servoPos < anguloFechado))
+          servoPos = anguloFechado;
         servoMotor.write(servoPos);
-      } else {
-        servoMotor.detach();          // desliga o sinal — para vibrar e economiza corrente
+      } else if (millis() - feedTimer >= 300UL) {
+        servoMotor.detach();
         feedState     = FEED_IDLE;
         requestSource = "";
         lcdPage       = -1;
@@ -498,41 +504,48 @@ void handleServoGoto() {
     server.send(200, "application/json", "{\"ok\":false,\"msg\":\"Sistema ocupado.\"}");
     return;
   }
+  int startPos = servoPos;
   int step = (deg > servoPos) ? 1 : -1;
   servoMotor.attach(SERVO_PIN);
   while (servoPos != deg) {
     servoPos += step;
     servoMotor.write(servoPos);
-    delay(8);
+    delay(2);
   }
+  // Aguarda o servo fisicamente chegar antes de desligar o sinal
+  int traveled = abs(deg - startPos);
+  delay(max(200, traveled * 2));
   servoMotor.detach();
   server.send(200, "application/json", "{\"ok\":true,\"deg\":" + String(deg) + "}");
 }
 
 void handleSetServoConfig() {
-  if (!server.hasArg("ao") || !server.hasArg("af") || !server.hasArg("sp")) {
+  if (!server.hasArg("ao") || !server.hasArg("af") || !server.hasArg("sd")) {
     server.send(400, "text/plain", "Parametros ausentes.");
     return;
   }
   int ao = server.arg("ao").toInt();
   int af = server.arg("af").toInt();
-  int sp = server.arg("sp").toInt();
-  if (ao < 0 || ao > 180 || af < 0 || af > 180 || sp < 1 || sp > 50) {
+  int sd = server.arg("sd").toInt();
+  if (ao < 0 || ao > 180 || af < 0 || af > 180 || sd < 1 || sd > 20) {
     server.send(400, "text/plain", "Valores invalidos.");
     return;
   }
   anguloAberto  = ao;
   anguloFechado = af;
-  sweepStepMs   = sp;
+  sweepStepDeg  = sd;
   saveSchedules();
-  // Retorna para posicao fechada com a nova configuracao
+  // Retorna para posicao fechada usando o passo configurado
   servoMotor.attach(SERVO_PIN);
-  int step = (anguloFechado > servoPos) ? 1 : -1;
   while (servoPos != anguloFechado) {
-    servoPos += step;
+    int delta = anguloFechado - servoPos;
+    int move  = (abs(delta) >= sweepStepDeg) ? sweepStepDeg : abs(delta);
+    servoPos += (delta > 0) ? move : -move;
     servoMotor.write(servoPos);
-    delay(8);
+    delay(2);
   }
+  // Aguarda o servo fisicamente chegar antes de desligar o sinal
+  delay(300);
   servoMotor.detach();
   server.send(200, "application/json", "{\"ok\":true}");
 }
@@ -635,8 +648,7 @@ String htmlPage() {
   html += ".catch(function(){document.getElementById('manualMsg').innerText='Erro de comunicacao.';btn.disabled=false;btn.innerText='Alimentar agora';});}";
   html += "function updatePortion(v){document.getElementById('portionVal').innerText=(v/1000).toFixed(1)+'s';}";
   html += "function updateAngle(id,v){document.getElementById(id).innerText=v+'°';}";
-  html += "function updateSpeed(v){var ms=parseInt(v);document.getElementById('speedVal').innerText=ms+'ms';}";
-  html += "function testServo(sliderId,btnId,lbl){";
+  html += "function updateStepDeg(v){var d=parseInt(v);document.getElementById('stepDegVal').innerText=d+(d==1?' grau':' graus');}";  html += "function testServo(sliderId,btnId,lbl){";
   html += "var deg=document.getElementById(sliderId).value;";
   html += "var btn=document.getElementById(btnId);btn.disabled=true;btn.innerText='Movendo...';";
   html += "fetch('/servoGoto?deg='+deg).then(function(r){return r.json();}).then(function(d){";
@@ -644,9 +656,9 @@ String htmlPage() {
   html += "function saveServo(){";
   html += "var ao=document.getElementById('slAo').value;";
   html += "var af=document.getElementById('slAf').value;";
-  html += "var sp=document.getElementById('slSp').value;";
+  html += "var sd=document.getElementById('slSd').value;";
   html += "var btn=document.getElementById('servoBtn');btn.disabled=true;btn.innerText='Salvando...';";
-  html += "fetch('/setServo?ao='+ao+'&af='+af+'&sp='+sp)";
+  html += "fetch('/setServo?ao='+ao+'&af='+af+'&sd='+sd)";
   html += ".then(function(r){return r.json();}).then(function(d){";
   html += "var mg=document.getElementById('servoMsg');mg.innerText=d.ok?'Salvo!':'Erro.';";
   html += "mg.style.color=d.ok?'#0b7a75':'#e53935';";
@@ -726,12 +738,12 @@ String htmlPage() {
   html += "</div>";
 
   html += "<div class='calib-row'>";
-  html += "<span class='calib-lbl'>Velocidade</span>";
+  html += "<span class='calib-lbl'>Passo</span>";
   html += "<div class='calib-range'>";
-  html += "<input type='range' id='slSp' min='1' max='50' step='1' value='" + String(sweepStepMs) + "' oninput='updateSpeed(this.value)'>";
-  html += "<div style='display:flex;justify-content:space-between;font-size:.75rem;color:#aaa;margin-top:2px'><span>Rapido (1ms)</span><span>Devagar (50ms)</span></div>";
+  html += "<input type='range' id='slSd' min='1' max='20' step='1' value='" + String(sweepStepDeg) + "' oninput='updateStepDeg(this.value)'>";
+  html += "<div style='display:flex;justify-content:space-between;font-size:.75rem;color:#aaa;margin-top:2px'><span>Suave (1&#176;)</span><span>Rapido (20&#176;)</span></div>";
   html += "</div>";
-  html += "<span class='calib-val' id='speedVal'>" + String(sweepStepMs) + "ms</span>";
+  html += "<span class='calib-val' id='stepDegVal'>" + String(sweepStepDeg) + (sweepStepDeg == 1 ? " grau" : " graus") + "</span>";
   html += "</div>";
 
   html += "<button id='servoBtn' class='bp' onclick='saveServo()'>Salvar calibracao</button>";
