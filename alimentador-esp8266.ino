@@ -5,7 +5,7 @@
  *   - ESP8266WebServer  (inclusa no core ESP8266)
  *   - LiquidCrystal_I2C (Frank de Brabander)
  *   - Servo             (inclusa no core ESP8266)
- *   - WiFiManager       (tzapu) — instalar pelo Library Manager
+ *   - DNSServer         (inclusa no core ESP8266)
  *
  * Pinos:
  *   LCD SDA → D2 (GPIO4)
@@ -15,23 +15,27 @@
  * Melhorias v2:
  *   1. LCD com 2 ou 3 telas rotativas (3ª ativa so com timer + agendamento simultaneos)
  *   2. Alimentacao nao-bloqueante via state machine (WiFi nunca trava durante o servo)
- *   3. Reconexao automatica de WiFi a cada 10 s
- *   4. Timeout de 20 s no setup (nao trava para sempre sem rede)
- *   5. Modo offline: servo + LCD funcionam mesmo sem WiFi
- *   6. Horarios fixos salvos em EEPROM (persistem apos queda de energia/WiFi)
+ *   3. Modo Access Point com IP fixo 192.168.4.1
+ *   4. Portal cativo (auto-redirect) para facilitar acesso
+ *   5. Modo offline: servo + LCD funcionam sempre
+ *   6. Horarios fixos salvos em EEPROM (persistem apos queda de energia)
  */
 
 #include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <WiFiManager.h>
+#include <DNSServer.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <Servo.h>
 #include <time.h>
 
-// Pino do botao de reset WiFi (GPIO0 = botao FLASH da maioria das placas)
-#define RESET_BTN_PIN 0
+// Configuracao do Access Point
+const char* AP_SSID     = "SmartPet-Alimentador";
+const char* AP_PASSWORD = "";  // Sem senha para facilitar acesso
+IPAddress   apIP(192, 168, 4, 1);
+IPAddress   apGateway(192, 168, 4, 1);
+IPAddress   apSubnet(255, 255, 255, 0);
 
 // Fuso horario: Manaus / AM (UTC-4)
 const long GMT_OFFSET_SEC      = -4 * 3600;
@@ -39,8 +43,11 @@ const int  DAYLIGHT_OFFSET_SEC = 0;
 
 // Objetos
 ESP8266WebServer  server(80);
+DNSServer         dnsServer;
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 Servo             servoMotor;
+
+const byte DNS_PORT = 53;
 
 // Pinos
 #define SDA_PIN   D2
@@ -287,11 +294,11 @@ void showNormalLCD() {
       String hhmm = timeOk
         ? twoDigits(t.tm_hour) + ":" + twoDigits(t.tm_min)
         : "--:--";
-      lcdShow("SmartPet " + hhmm, "WiFi:" + WiFi.SSID());
+      lcdShow("SmartPet " + hhmm, "AP:SmartPet");
       break;
     }
     case 1: {
-      lcdShow("IP:", WiFi.localIP().toString());
+      lcdShow("IP:", "192.168.4.1");
       break;
     }
     case 2: {
@@ -305,7 +312,6 @@ void showNormalLCD() {
   }
 }
 
-void showConnectingLCD() { lcdShow("SmartPet",    "Conectando..."); }
 void showFeedingLCD()    { lcdShow("Alimentando", requestSource);   }
 void showClosingLCD()    { lcdShow("Fechando",    "Aguarde...");     }
 
@@ -481,12 +487,8 @@ void handleSetSchedules() {
 }
 
 void handleResetWifi() {
-  lcdShow("Trocando WiFi", "Reiniciando...");
-  server.send(200, "text/plain", "ok");
-  delay(400);
-  WiFiManager wm;
-  wm.resetSettings();
-  ESP.restart();
+  // Em modo AP, nao ha necessidade de reset WiFi
+  server.send(200, "text/plain", "Funcao nao disponivel no modo AP");
 }
 
 // Move servo direto para um angulo — usado apenas no modo teste da calibracao
@@ -671,8 +673,6 @@ String htmlPage() {
   html += "var mg=document.getElementById('portionMsg');mg.innerText=d.ok?'Salvo!':'Erro.';mg.style.color=d.ok?'#0b7a75':'#e53935';";
   html += "setTimeout(function(){mg.innerText='';},3000);btn.disabled=false;btn.innerText='Salvar porcao';})";
   html += ".catch(function(){btn.disabled=false;btn.innerText='Salvar porcao';});}";
-  html += "function resetWifi(){if(!confirm('Desconectar do WiFi atual?\\nO dispositivo vai reiniciar no modo AP (SmartPet-Setup / 192.168.4.1).'))return;";
-  html += "fetch('/resetWifi').then(function(){document.getElementById('wifiMsg').innerText='Reiniciando... conecte no AP SmartPet-Setup e acesse 192.168.4.1';}).catch(function(){});}";
   html += "setInterval(function(){fetch('/api/status').then(function(r){return r.json();}).then(function(d){";
   html += "var cl=document.getElementById('liveClock');if(cl)cl.innerText=d.time;";
   html += "var st=document.getElementById('liveStatus');if(st){st.innerText=d.busy?'Alimentando':(d.feedReq?'Na fila':'Pronto');";
@@ -696,13 +696,13 @@ String htmlPage() {
   String stText = isBusy() ? "Alimentando" : (feedRequested ? "Na fila" : "Pronto");
   html += "<div class='card'><p class='ct'>Status</p>";
   html += "<div class='ig'>";
-  html += "<b>Rede</b><span>" + WiFi.SSID() + "</span>";
-  html += "<b>IP</b><span>" + WiFi.localIP().toString() + "</span>";
+  html += "<b>Modo</b><span>Access Point</span>";
+  html += "<b>SSID</b><span>SmartPet-Alimentador</span>";
+  html += "<b>IP</b><span>192.168.4.1</span>";
   html += "<b>Hora</b><span id='liveClock'>" + getCurrentTimeStr() + "</span>";
   html += "<b>Estado</b><span id='liveStatus' class='badge " + stCls + "'>" + stText + "</span>";
   html += "</div>";
-  html += "<div class='wrow'><button class='bd' style='width:auto;padding:10px 16px;font-size:.85rem' onclick='resetWifi()'>Trocar WiFi</button></div>";
-  html += "<p id='wifiMsg' class='msg'></p></div>";
+  html += "</div>";
 
   // Alimentar agora
   html += "<div class='card'><p class='ct'>Alimentar agora</p>";
@@ -841,46 +841,6 @@ void checkSchedulesTrigger() {
   }
 }
 
-// Segurar FLASH por 3 s em qualquer momento reseta o WiFi
-void checkResetButton() {
-  static unsigned long pressedAt = 0;
-  static bool          counting  = false;
-
-  if (digitalRead(RESET_BTN_PIN) == LOW) {
-    if (!counting) { counting = true; pressedAt = millis(); }
-    if (millis() - pressedAt >= 3000UL) {
-      lcdShow("WiFi reset!", "Reiniciando...");
-      Serial.println("[WiFi] Reset pelo botao FLASH.");
-      delay(600);
-      WiFiManager wm;
-      wm.resetSettings();
-      ESP.restart();
-    }
-  } else {
-    counting = false;
-  }
-}
-
-// Reconexao WiFi (verifica a cada 10 s)
-void checkWiFiReconnect() {
-  static unsigned long lastCheck  = 0;
-  static bool          wasOffline = false;
-  if (millis() - lastCheck < 10000UL) return;
-  lastCheck = millis();
-
-  if (WiFi.status() != WL_CONNECTED) {
-    wasOffline = true;
-    Serial.println("[WiFi] Desconectado. Reconectando...");
-    WiFi.reconnect();
-  } else if (wasOffline) {
-    // reconectou apos ter estado offline: garante NTP sincronizado
-    wasOffline = false;
-    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, "pool.ntp.org", "time.nist.gov");
-    Serial.println("[WiFi] Reconectado. NTP re-configurado. IP: " + WiFi.localIP().toString());
-    lcdShow("WiFi OK", WiFi.localIP().toString());
-  }
-}
-
 // =====================================================================
 // SETUP
 // =====================================================================
@@ -902,40 +862,26 @@ void setup() {
   delay(400);               // tempo para chegar na posicao inicial
   servoMotor.detach();      // desliga o sinal — servo livre e sem vibrar
 
-  // Botao de reset: segurar ao ligar apaga credenciais salvas
-  pinMode(RESET_BTN_PIN, INPUT_PULLUP);
-  if (digitalRead(RESET_BTN_PIN) == LOW) {
-    lcdShow("WiFi reset!", "Reiniciando...");
-    Serial.println("[WiFi] Reset das credenciais solicitado.");
-    WiFiManager wm;
-    wm.resetSettings();
-    delay(1500);
-    ESP.restart();
-  }
+  lcdShow("SmartPet", "Iniciando AP...");
 
-  showConnectingLCD();
+  // Configura o ESP8266 como Access Point
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(apIP, apGateway, apSubnet);
+  WiFi.softAP(AP_SSID, AP_PASSWORD);
 
-  WiFiManager wm;
-  wm.setConfigPortalTimeout(180); // 3 min para configurar; apos isso segue offline
+  Serial.println("[AP] Access Point iniciado");
+  Serial.print("[AP] SSID: ");
+  Serial.println(AP_SSID);
+  Serial.print("[AP] IP: ");
+  Serial.println(WiFi.softAPIP());
 
-  // Callback: avisa no LCD quando o portal AP esta ativo
-  wm.setAPCallback([](WiFiManager* wm) {
-    lcdShow("Config WiFi", "192.168.4.1");
-    Serial.println("[WiFi] Portal ativo: AP 'SmartPet-Setup' — acesse 192.168.4.1");
-  });
+  lcdShow("SmartPet AP", "192.168.4.1");
 
-  bool connected = wm.autoConnect("SmartPet-Setup");
-  // Se o usuario nao configurar em 3 min, connected = false (modo offline)
+  // Inicia o servidor DNS para captive portal (redireciona tudo para o IP do AP)
+  dnsServer.start(DNS_PORT, "*", apIP);
+  Serial.println("[DNS] Servidor DNS iniciado para captive portal");
 
-  if (connected) {
-    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, "pool.ntp.org", "time.nist.gov");
-    Serial.println("[WiFi] Conectado. IP: " + WiFi.localIP().toString());
-    lcdShow("SmartPet", WiFi.localIP().toString());
-  } else {
-    Serial.println("[WiFi] Sem config. Modo offline.");
-    lcdShow("SmartPet", "Sem WiFi");
-  }
-
+  // Configura as rotas do servidor web
   server.on("/",             handleRoot);
   server.on("/api/status",   handleApiStatus);
   server.on("/manual",       handleManualFeed);
@@ -945,7 +891,15 @@ void setup() {
   server.on("/resetWifi",    handleResetWifi);
   server.on("/servoGoto",    handleServoGoto);
   server.on("/setServo",     handleSetServoConfig);
+  
+  // Rota coringa para captive portal - redireciona qualquer requisicao nao mapeada para a pagina principal
+  server.onNotFound([]() {
+    server.sendHeader("Location", "http://192.168.4.1/", true);
+    server.send(302, "text/plain", "");
+  });
+  
   server.begin();
+  Serial.println("[HTTP] Servidor web iniciado");
 
   delay(2000);
   lastLcdChange = millis();
@@ -956,9 +910,8 @@ void setup() {
 // =====================================================================
 
 void loop() {
-  checkResetButton();
+  dnsServer.processNextRequest();  // Processa requisicoes DNS para captive portal
   server.handleClient();
-  checkWiFiReconnect();
   checkTimerTrigger();
   checkSchedulesTrigger();
   processFeed();
