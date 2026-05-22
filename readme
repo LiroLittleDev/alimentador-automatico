@@ -1,7 +1,7 @@
 # SmartPet v2 - Alimentador Automatico (ESP8266 + Servo + LCD I2C)
 
 Projeto de alimentador automatico para pet usando ESP8266, servo 9g e LCD 16x2 I2C.
-O sistema funciona com interface web local, timer, horarios fixos, calibracao de servo e modo offline.
+O sistema funciona com interface web local em modo Access Point, timer, horarios fixos e calibracao de servo.
 
 ## Funcionalidades
 
@@ -10,9 +10,8 @@ O sistema funciona com interface web local, timer, horarios fixos, calibracao de
 - Ate 4 horarios fixos diarios.
 - Persistencia de configuracoes em EEPROM (horarios, porcao e calibracao).
 - LCD com telas rotativas de status.
-- Reconexao automatica de WiFi.
-- Modo offline (servo + LCD continuam funcionando sem rede).
-- Reset de credenciais WiFi por botao FLASH (GPIO0) ou pela pagina web.
+- Modo Access Point com IP fixo (192.168.4.1).
+- Portal cativo (auto-redirecionamento) para facilitar acesso.
 
 ## Hardware
 
@@ -26,34 +25,33 @@ O sistema funciona com interface web local, timer, horarios fixos, calibracao de
 - LCD SDA -> D2 (GPIO4)
 - LCD SCL -> D1 (GPIO5)
 - Servo sinal -> D4 (GPIO2)
-- Botao reset WiFi -> GPIO0 (botao FLASH da maioria das placas)
 
 ## Bibliotecas necessarias
 
 Instale pelo Library Manager da Arduino IDE:
 
-- WiFiManager (tzapu)
 - LiquidCrystal_I2C (Frank de Brabander)
 
 Ja inclusas no core ESP8266:
 
 - ESP8266WebServer
+- DNSServer
 - Servo
 
 Tambem utilizadas:
 
 - EEPROM
 - Wire
-- time (NTP)
+- time
 
 ## Como usar
 
 1. Abra o arquivo alimentador-esp8266.ino na Arduino IDE.
 2. Selecione a placa ESP8266 correta e a porta serial.
 3. Compile e grave no ESP8266.
-4. No primeiro boot (ou sem credenciais), conecte no AP SmartPet-Setup.
-5. Acesse 192.168.4.1 para configurar o WiFi.
-6. Apos conectar, abra o IP exibido no LCD para acessar o painel.
+4. Apos ligar, o ESP8266 criara um Access Point com o nome "SmartPet-Alimentador" (sem senha).
+5. Conecte seu celular ou computador ao WiFi "SmartPet-Alimentador".
+6. O navegador deve abrir automaticamente a pagina de controle. Se nao abrir, acesse http://192.168.4.1
 
 ## Interface web
 
@@ -64,7 +62,6 @@ No painel voce pode:
 - Calibrar angulo aberto/fechado e velocidade do servo.
 - Configurar timer unico (h, min, seg).
 - Configurar ate 4 horarios fixos diarios.
-- Trocar/redefinir WiFi.
 
 ## Endpoints HTTP
 
@@ -76,7 +73,6 @@ No painel voce pode:
 - GET /setPortion?ms=500-8000 -> salva duracao da porcao
 - GET /servoGoto?deg=0-180 -> move servo para teste de calibracao
 - GET /setServo?ao=0-180&af=0-180&sp=1-50 -> salva calibracao do servo
-- GET /resetWifi -> apaga credenciais e reinicia
 
 ## Persistencia (EEPROM)
 
@@ -92,14 +88,14 @@ Sao salvos:
 - O movimento de alimentacao principal usa state machine nao-bloqueante.
 - O modo de teste de servo (/servoGoto e parte da calibracao) usa movimento bloqueante curto.
 - Fuso configurado no codigo: UTC-4 (Manaus/AM).
-- Timer depende de NTP (hora sincronizada).
+- O sistema funciona em modo Access Point (sem conexao com internet).
+- Timer funciona com base no tempo interno do ESP8266 (sem sincronizacao NTP).
 
 ## Solucao de problemas
 
-- Nao abre painel web: confira o IP no LCD e se celular/PC esta na mesma rede.
+- Nao acha o WiFi: procure por "SmartPet-Alimentador" na lista de redes WiFi disponiveis.
+- Nao abre painel web: depois de conectar ao WiFi, acesse http://192.168.4.1 manualmente.
 - Servo treme: use fonte externa adequada para o servo e GND comum com o ESP8266.
-- Horario errado: confirme conexao com internet para NTP sincronizar.
-- WiFi travado: segure FLASH por ~3 segundos para resetar credenciais.
 
 ## Arquivo principal
 
